@@ -2,44 +2,163 @@ import sys
 import os
 import subprocess
 import tempfile
-from pathlib import Path  # For safe paths
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QTextEdit, QLabel, QFileDialog, QHBoxLayout)
-from PyQt5.QtCore import QProcess
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QTextEdit, QLabel, QFileDialog, QHBoxLayout, QSplitter, QFrame)
+from PyQt5.QtCore import Qt
 from database import Database
+from dotenv import load_dotenv
+
+    
+load_dotenv()  # Loads .env into os.environ
+
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    print("Groq not installed. Run: pip install groq")
 
 class IDEWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Ultimate Coding System")
-        self.setGeometry(100, 100, 1000, 700)  # Bigger for split-view prep
+        self.setGeometry(100, 100, 1200, 800)
 
-        # Instance vars for profile/AI
         self.db = None
         self.user_id = None
         self.user_name = "User"
-        self.current_file = None  # For save/load tracking
+        self.current_file = None
 
-        # Central widget and layout
+        # Main horizontal splitter: Editor LEFT | Chat RIGHT
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Code Editor (enhanced placeholder)
+        splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(splitter)
+
+        # === LEFT: Code Editor Panel ===
+        left_panel = QFrame()
+        left_panel.setFrameShape(QFrame.StyledPanel)
+        left_layout = QVBoxLayout(left_panel)
+
         self.code_editor = QTextEdit()
-        self.code_editor.setPlaceholderText("Write your Python code here...\nTip: Try print('Hello, Ultimate Coding System!')")
-        layout.addWidget(self.code_editor)
+        self.code_editor.setPlaceholderText("Write your Python code here...\nAsk the AI tutor for help anytime →")
+        left_layout.addWidget(self.code_editor)
 
-        # Buttons Row
-        buttons_layout = self._create_buttons_row()
-        layout.addLayout(buttons_layout)
+        buttons_row = self._create_buttons_row()
+        left_layout.addLayout(buttons_row)
 
-        # Output Console
         self.output_label = QLabel("Output will appear here.\nStatus: Ready.")
-        self.output_label.setStyleSheet("font-family: monospace; padding: 10px; background: #f0f0f0;")
-        layout.addWidget(self.output_label)
+        self.output_label.setStyleSheet("font-family: monospace; padding: 10px; background: #1e1e1e; color: #d4d4d4;")
+        self.output_label.setAlignment(Qt.AlignTop)
+        left_layout.addWidget(self.output_label)
 
-        # Profile Section (Safer version - handles OneDrive/permissions)
-        self._setup_profile(layout)
+        # Profile display
+        self._setup_profile(left_layout)
+
+        splitter.addWidget(left_panel)
+
+        # === RIGHT: AI Tutor Chat Panel ===
+        right_panel = QFrame()
+        right_panel.setFrameShape(QFrame.StyledPanel)
+        right_layout = QVBoxLayout(right_panel)
+
+        chat_title = QLabel("🧠 AI Tutor")
+        chat_title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background: #2196f3; color: white;")
+        chat_title.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(chat_title)
+
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.chat_display.setStyleSheet("background: #f8f9fa; font-family: monospace;")
+        right_layout.addWidget(self.chat_display)
+
+        input_layout = QHBoxLayout()
+        self.chat_input = QTextEdit()
+        self.chat_input.setFixedHeight(80)
+        self.chat_input.setPlaceholderText("Ask about code, concepts, projects, or request feedback...")
+        input_layout.addWidget(self.chat_input)
+
+        send_btn = QPushButton("Send")
+        send_btn.clicked.connect(self.send_to_ai)
+        send_btn.setFixedWidth(100)
+        input_layout.addWidget(send_btn)
+
+        right_layout.addLayout(input_layout)
+
+        if not GROQ_AVAILABLE:
+            self.chat_display.setPlainText("⚠️ Groq library not found.\nRun: pip install groq\nThen restart the app.")
+
+        splitter.addWidget(right_panel)
+
+        # Initial splitter ratio (60% editor, 40% chat)
+        splitter.setSizes([700, 500])
+
+        # Welcome message
+        self._add_chat_message("assistant", "Hello! I'm your AI tutor. I can:\n• Review your code\n• Explain concepts\n• Suggest projects based on your skills\n• Help you level up from beginner to architect\n\nTry asking: 'Review my code' or 'Suggest a beginner project'")
+
+    def _add_chat_message(self, role: str, content: str):
+        """Helper to append formatted chat messages."""
+        color = "#0d47a1" if role == "assistant" else "#2e7d32"
+        prefix = "👤 You:" if role == "user" else "🧠 Tutor:"
+        formatted = f"<p style='color:{color}; margin:5px;'><b>{prefix}</b><br>{content.replace('\n', '<br>')}</p><hr>"
+        self.chat_display.append(formatted)
+
+    def send_to_ai(self):
+        user_message = self.chat_input.toPlainText().strip()
+        if not user_message:
+            return
+
+        self._add_chat_message("user", user_message)
+        self.chat_input.clear()
+
+        if not GROQ_AVAILABLE:
+            self._add_chat_message("assistant", "Error: Groq not available. Install with 'pip install groq'")
+            return
+
+        # Get current code for context
+        current_code = self.code_editor.toPlainText()
+
+        # Simple prompt (we'll enhance later)
+        system_prompt = f"""
+        You are an expert Python tutor helping {self.user_name} grow from novice to senior architect.
+        Current skill levels: {dict(self.db.get_skills(self.user_id)) if self.db else 'unknown'}
+
+        When reviewing code, be encouraging, specific, and educational.
+        Suggest improvements tied to their skills (e.g., Data Structures, Debugging).
+        If asked for a project, match difficulty to current levels.
+        """.strip()
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Current code:\n```python\n{current_code}\n```\n\nUser question: {user_message}"}
+        ]
+
+        self._add_chat_message("assistant", "Thinking...")
+
+        try:
+            client = Groq(api_key=os.getenv("GROQ_API_KEY"))  # We'll set this next
+            if not client.api_key:
+                raise ValueError("No API key")
+
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",  # Fast + smart
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1024
+            )
+            response = completion.choices[0].message.content
+            self.chat_display.moveCursor(self.chat_display.textCursor().End)
+            self.chat_display.textCursor().deletePreviousChar()  # Remove "Thinking..."
+            self._add_chat_message("assistant", response)
+
+        except Exception as e:
+            error_msg = f"API Error: {str(e)}\n\nTip: Set GROQ_API_KEY in environment or add to code temporarily for testing."
+            self.chat_display.textCursor().deletePreviousChar()
+            self._add_chat_message("assistant", error_msg)
+
 
     def _create_buttons_row(self):
         """Helper: Row of buttons (Save, Load, Run, Refresh) - Good for Code Readability."""
