@@ -19,12 +19,12 @@ class Database:
 
     def create_tables(self):
         cursor = self.conn.cursor()
-        # Existing users and skills tables...
+        # Existing users + skills tables...
 
-        # New: Projects table
+        # New: Projects table with difficulty per skill (0-100)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
                 description TEXT,
                 difficulty_python_syntax INTEGER DEFAULT 0,
@@ -40,40 +40,47 @@ class Database:
             )
         ''')
         self.conn.commit()
-        self._seed_projects()  # Add starter projects
+        self._seed_initial_projects()
 
-    def _seed_projects(self):
-        """Seed some beginner-to-advanced projects."""
+    def _seed_initial_projects(self):
+        """Add 5 starter projects (beginner → advanced)."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM projects")
         if cursor.fetchone()[0] > 0:
             return  # Already seeded
 
-        starter_projects = [
-            ("Hello World CLI", "Build a command-line app that greets the user and accepts input.", 10, 0, 0, 5, 0, 10, 0, 0, 0, 15),
-            ("Todo List App", "Create a console-based todo list with add/remove/view.", 20, 30, 10, 20, 0, 40, 0, 10, 5, 30),
-            ("Binary Search Implementation", "Implement and test binary search on sorted lists.", 15, 20, 60, 30, 0, 50, 0, 20, 10, 25),
-            ("Simple REST API with Flask", "Build a Flask API with CRUD endpoints.", 40, 40, 20, 40, 30, 50, 10, 30, 20, 40),
-            ("Scalable Chat Server", "Design a multi-client chat server with threading.", 50, 50, 40, 60, 70, 60, 20, 40, 50, 50),
+        projects = [
+            ("Hello World Enhancements", "Build a CLI that greets, takes name/input, and handles errors gracefully.", 
+             15, 5, 0, 10, 0, 15, 0, 5, 0, 20),
+            ("Todo List with Persistence", "Console todo app that saves to JSON file. Add/remove/list.", 
+             25, 35, 15, 25, 0, 45, 5, 15, 10, 35),
+            ("Binary Search Tree", "Implement BST with insert/search/delete and unit tests.", 
+             20, 45, 70, 35, 0, 60, 0, 40, 15, 30),
+            ("Flask REST API", "Build a simple CRUD API for a resource (e.g., books) with routes and validation.", 
+             45, 40, 25, 45, 30, 55, 10, 35, 20, 45),
+            ("Multi-threaded Chat Server", "TCP server handling multiple clients with threading and clean architecture.", 
+             55, 50, 40, 65, 75, 65, 20, 45, 55, 55),
         ]
         cursor.executemany('''
-            INSERT INTO projects (title, description, difficulty_python_syntax, difficulty_data_structures,
-            difficulty_algorithms, difficulty_debugging, difficulty_system_design, difficulty_problem_solving,
-            difficulty_version_control, difficulty_testing_qa, difficulty_performance_optimization,
-            difficulty_code_readability)
+            INSERT INTO projects 
+            (title, description, difficulty_python_syntax, difficulty_data_structures, difficulty_algorithms,
+             difficulty_debugging, difficulty_system_design, difficulty_problem_solving, difficulty_version_control,
+             difficulty_testing_qa, difficulty_performance_optimization, difficulty_code_readability)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', starter_projects)
+        ''', projects)
         self.conn.commit()
 
     def get_all_projects(self):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT id, title, description FROM projects")
+        cursor.execute("SELECT id, title, description FROM projects ORDER BY id")
         return cursor.fetchall()
 
-    def update_skill_level(self, user_id, skill_name, new_level):
-        """Cap at 100."""
-        new_level = min(100, max(0, new_level))
+    def update_skill_level(self, user_id, skill_name, delta):
+        """Add delta (+/-) to skill, capped 0-100."""
         cursor = self.conn.cursor()
+        cursor.execute("SELECT level FROM skills WHERE user_id = ? AND skill_name = ?", (user_id, skill_name))
+        current = cursor.fetchone()[0]
+        new_level = max(0, min(100, current + delta))
         cursor.execute("UPDATE skills SET level = ? WHERE user_id = ? AND skill_name = ?", (new_level, user_id, skill_name))
         self.conn.commit()
 

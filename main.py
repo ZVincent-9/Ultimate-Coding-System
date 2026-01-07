@@ -50,9 +50,10 @@ class IDEWindow(QMainWindow):
         buttons_row = self._create_buttons_row()
         left_layout.addLayout(buttons_row)
 
-        project_btn = QPushButton("Browse Projects")
-        project_btn.clicked.connect(self.browse_projects)
+        project_btn = QPushButton("Show Projects")
+        project_btn.clicked.connect(self.show_projects)
         buttons_row.addWidget(project_btn)
+
         self.output_label = QLabel("Output will appear here.\nStatus: Ready.")
         self.output_label.setStyleSheet("font-family: monospace; padding: 10px; background: #1e1e1e; color: #d4d4d4;")
         self.output_label.setAlignment(Qt.AlignTop)
@@ -126,19 +127,19 @@ class IDEWindow(QMainWindow):
 
         # Simple prompt (we'll enhance later)
         system_prompt = f"""
-        You are an expert Python tutor guiding {self.user_name} from novice to senior architect.
+        You are an encouraging Python tutor guiding {self.user_name} from beginner to senior architect.
         Current skills (0-100): {dict(self.db.get_skills(self.user_id))}
 
-        Rules:
-        1. Always be encouraging and specific.
-        2. If reviewing code or giving feedback, end response with JSON for skill updates:
-        {{"updates": {{"Skill Name": +/-delta, ...}}}}
-        Example: {{"updates": {{"Debugging": +15, "Code Readability / Maintenance": +10}}}}
+        Guidelines:
+        - Be specific, positive, and educational.
+        - When reviewing code or answering questions, end your response with a JSON block for skill changes:
+        {{"updates": {{"Skill Name": +delta or -delta, ...}}}}
+        Example: {{"updates": {{"Python Syntax": +10, "Debugging": +20, "Code Readability / Maintenance": +15}}}}
+        Only include skills that improved (positive delta) or need work (small negative if major issues).
+        - When asked for projects or "suggest project", recommend 2-3 from this list that target weak skills (<50):
+        {[(p[1], p[2]) for p in self.db.get_all_projects()]}
 
-        3. If asked for projects or "suggest project", list 2-3 from these (match difficulty to skills):
-        {[(p[1], p[2]) for p in self.db.get_all_projects()]}  # Titles + descriptions
-
-        4. Suggest projects targeting weak skills (<50/100).
+        Keep JSON on its own line at the end.
         """.strip()
 
         messages = [
@@ -149,7 +150,12 @@ class IDEWindow(QMainWindow):
         self._add_chat_message("assistant", "Thinking...")
 
         try:
-            # Use current best model (fast + capable)
+            api_key = os.getenv("GROQ_API_KEY")
+            if not api_key:
+                raise ValueError("GROQ_API_KEY not set in .env or environment")
+
+            client = Groq(api_key=api_key)  # ← This line was missing!
+
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",  # Confirmed active Jan 2026
                 messages=messages,
@@ -164,21 +170,22 @@ class IDEWindow(QMainWindow):
             json_match = re.search(r'\{.*"updates".*\}', response, re.DOTALL)
             if json_match:
                 try:
-                    update_data = json.loads(json_match.group(0))
-                    for skill, delta in update_data.get("updates", {}).items():
-                        current = dict(self.db.get_skills(self.user_id)).get(skill, 0)
-                        new = current + delta
-                        self.db.update_skill_level(self.user_id, skill, new)
-                    self.refresh_profile()  # Immediate UI update
-                    response += "\n\n🎉 Skills updated based on this session!"
-                except:
-                    pass  # Silent if malformed
+                    data = json.loads(json_match.group(0))
+                    for skill, delta in data.get("updates", {}).items():
+                        if skill in [row[0] for row in self.db.get_skills(self.user_id)]:
+                            self.db.update_skill_level(self.user_id, skill, delta)
+                    self.refresh_profile()  # Live update
+                    response += "\n\n🎉 Your skills have been updated!"
+                except Exception as e:
+                    print("JSON parse error:", e)  # Debug silently
 
+            # Remove "Thinking..." before final response
+            self.chat_display.textCursor().deletePreviousChar()
             self._add_chat_message("assistant", response)
 
         except Exception as e:
-            error_msg = f"API Error: {str(e)}\n\nTip: Set GROQ_API_KEY in environment or add to code temporarily for testing."
-            self.chat_display.textCursor().deletePreviousChar()
+            error_msg = f"API Error: {str(e)}\n\nTip: Check .env has GROQ_API_KEY and internet connection."
+            self.chat_display.textCursor().deletePreviousChar()  # Remove "Thinking..."
             self._add_chat_message("assistant", error_msg)
 
 
@@ -291,6 +298,17 @@ class IDEWindow(QMainWindow):
                 self.code_editor.setText(f.read())
             self.current_file = file_path
             self.output_label.setText(f"Loaded: {file_path}")
+
+    def show_projects(self):
+        projects = self.db.get_all_projects()
+        if not projects:
+            msg = "No projects yet—ask the tutor to suggest some!"
+        else:
+            msg = "Recommended Projects (matched to your level):\n\n"
+            for i, (_, title, desc) in enumerate(projects):
+                msg += f"{i+1}. **{title}**\n{desc}\n\n"
+            msg += "Ask me: 'Tell me more about project 3' or 'Assign me the Todo List project'!"
+        self._add_chat_message("assistant", msg)
 
     def browse_projects(self):
         projects = self.db.get_all_projects()
