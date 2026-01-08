@@ -19,9 +19,23 @@ class Database:
 
     def create_tables(self):
         cursor = self.conn.cursor()
-        # Existing users + skills tables...
-
-        # New: Projects table with difficulty per skill (0-100)
+        # Users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+        ''')
+        # Skills table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS skills (
+                user_id INTEGER,
+                skill_name TEXT,
+                level INTEGER DEFAULT 0,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        ''')
+        # Projects table with difficulty per skill (0-100)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,6 +51,16 @@ class Database:
                 difficulty_testing_qa INTEGER DEFAULT 0,
                 difficulty_performance_optimization INTEGER DEFAULT 0,
                 difficulty_code_readability INTEGER DEFAULT 0
+            )
+        ''')
+        # User projects tracking
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_projects (
+                user_id INTEGER,
+                project_id INTEGER,
+                status TEXT DEFAULT 'suggested',  -- suggested, started, completed
+                notes TEXT,
+                PRIMARY KEY (user_id, project_id)
             )
         ''')
         self.conn.commit()
@@ -103,4 +127,22 @@ class Database:
     def get_skills(self, user_id):
         cursor = self.conn.cursor()
         cursor.execute("SELECT skill_name, level FROM skills WHERE user_id = ?", (user_id,))
+        return cursor.fetchall()
+    
+    def set_project_status(self, user_id, project_id, status, notes=""):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO user_projects (user_id, project_id, status, notes)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, project_id, status, notes))
+        self.conn.commit()
+
+    def get_user_projects(self, user_id):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT p.id, p.title, p.description, up.status, up.notes
+            FROM projects p
+            LEFT JOIN user_projects up ON p.id = up.project_id AND up.user_id = ?
+            ORDER BY up.status DESC, p.id
+        ''', (user_id,))
         return cursor.fetchall()

@@ -134,11 +134,12 @@ class IDEWindow(QMainWindow):
         - Be specific, positive, and educational.
         - When reviewing code or answering questions, end your response with a JSON block for skill changes:
         {{"updates": {{"Skill Name": +delta or -delta, ...}}}}
-        Example: {{"updates": {{"Python Syntax": +10, "Debugging": +20, "Code Readability / Maintenance": +15}}}}
+        Example: {{"updates": {{"Python Syntax": +1, "Debugging": +3, "Code Readability / Maintenance": +2}}}}
         Only include skills that improved (positive delta) or need work (small negative if major issues).
         - When asked for projects or "suggest project", recommend 2-3 from this list that target weak skills (<50):
         {[(p[1], p[2]) for p in self.db.get_all_projects()]}
-
+        - If user says "start project X", "working on Y", or "completed Z", update status and respond encouragingly.
+        Example response: "Great! Marked 'Todo List' as started. Let's crush it!"
         Keep JSON on its own line at the end.
         """.strip()
 
@@ -178,6 +179,12 @@ class IDEWindow(QMainWindow):
                     response += "\n\n🎉 Your skills have been updated!"
                 except Exception as e:
                     print("JSON parse error:", e)  # Debug silently
+
+            # Simple project status detection (enhance later)
+            lower_response = response.lower()
+            if "completed" in lower_response or "finished" in lower_response:
+                # Extract project title logic later; for now manual
+                response += "\n\n🏆 Amazing work! +Extra skill boost for completion coming soon."
 
             # Remove "Thinking..." before final response
             self.chat_display.textCursor().deletePreviousChar()
@@ -300,14 +307,16 @@ class IDEWindow(QMainWindow):
             self.output_label.setText(f"Loaded: {file_path}")
 
     def show_projects(self):
-        projects = self.db.get_all_projects()
-        if not projects:
-            msg = "No projects yet—ask the tutor to suggest some!"
-        else:
-            msg = "Recommended Projects (matched to your level):\n\n"
-            for i, (_, title, desc) in enumerate(projects):
-                msg += f"{i+1}. **{title}**\n{desc}\n\n"
-            msg += "Ask me: 'Tell me more about project 3' or 'Assign me the Todo List project'!"
+        projects = self.db.get_user_projects(self.user_id)
+        msg = "Your Project Curriculum:\n\n"
+        for pid, title, desc, status, notes in projects:
+            status_emoji = {"completed": "✅", "started": "🔄", "suggested": "➡️"}.get(status, "➡️")
+            msg += f"{status_emoji} **{title}** ({status})\n{desc}\n"
+            if notes:
+                msg += f"   Notes: {notes}\n"
+            msg += "\n"
+
+        msg += "Ask me: 'Start the Todo List project' or 'I completed Binary Search Tree' to update status!"
         self._add_chat_message("assistant", msg)
 
     def browse_projects(self):
